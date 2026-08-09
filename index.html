@@ -427,8 +427,9 @@ body {
 
 .stats-summary.dual { display: flex; flex-direction: column; gap: 2px; }
 .stats-summary-line { font-size: 12px; }
-.stats-summary-change { color: #c75b5b; }
-.stats-summary-change.up { color: #5b8c5b; }
+.stats-summary-change { }
+.stats-summary-change.positive { color: #c75b5b; }
+.stats-summary-change.negative { color: #5b8c5b; }
 
 .cat-mgr-panel {
   margin-bottom: 12px; padding: 10px;
@@ -1233,12 +1234,12 @@ function renderCompareStats() {
 
   // Dual summary
   const change = prevTotal > 0 ? Math.round(((curTotal - prevTotal) / prevTotal) * 100) : (curTotal > 0 ? 100 : 0);
-  const changeCls = change > 0 ? 'up' : (change < 0 ? '' : '');
-  const changeArrow = change > 0 ? '▲' : (change < 0 ? '▼' : '─');
+  const changeCls = change > 0 ? 'positive' : (change < 0 ? 'negative' : '');
+  const changeStr = change > 0 ? `▲ ${change}%` : (change < 0 ? `▼ ${change}%` : '─ 0%');
   document.getElementById('statsSummary').innerHTML = `
     <div class="stats-summary dual">
-      <div class="stats-summary-line">本期 共 ${curIvs.length} 条，合计 ${fmtDurationMs(curTotal)}</div>
-      <div class="stats-summary-line">上期 共 ${prevIvs.length} 条，合计 ${fmtDurationMs(prevTotal)} &nbsp;<span class="stats-summary-change ${changeCls}">${changeArrow} ${Math.abs(change)}%</span></div>
+      <div class="stats-summary-line">本期 共 ${curIvs.length} 条，合计 ${fmtDurationMs(curTotal)} &nbsp;<span class="stats-summary-change ${changeCls}">${changeStr}</span></div>
+      <div class="stats-summary-line">上期 共 ${prevIvs.length} 条，合计 ${fmtDurationMs(prevTotal)}</div>
     </div>`;
 
   // Build sorted list by current period duration
