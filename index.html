@@ -840,6 +840,7 @@ let phrases = [];
 let selected = new Set();
 let drillCat = null;
 let usedIds = new Set();  // IDs of records already used in intervals
+let recById = {};          // Fast record lookup
 let calDate = new Date(); // Current calendar month
 let filterDate = null;    // Date filter (YYYY-MM-DD), null = show all
 let filterStart = null;   // Range start
@@ -857,6 +858,7 @@ function save() {
   localStorage.setItem('nb_intervals', JSON.stringify(intervals));
   localStorage.setItem('nb_phrases', JSON.stringify(phrases));
   localStorage.setItem('nb_categories', JSON.stringify(categories));
+  recById = {}; records.forEach(r => { recById[r.id] = r; });
 }
 
 function load() {
@@ -956,7 +958,6 @@ function isInRange(ts, s, e) {
 // Gets intervals whose associated records fall within a period range
 function filterIntervalsByPeriod(ivs, period, offset) {
   const { start, end } = getPeriodRange(period, offset);
-  const recById = {}; records.forEach(r => { recById[r.id] = r; });
   return ivs.filter(iv => {
     const rA = recById[iv.idA];
     if (rA && isInRange(rA.ts, start, end)) return true;
@@ -1169,7 +1170,6 @@ function renderNormalStats() {
   if (filterDate) {
     const dStart = new Date(filterDate + 'T00:00:00').getTime();
     const dEnd = new Date(filterDate + 'T23:59:59').getTime();
-    const recById = {}; records.forEach(r => { recById[r.id] = r; });
     filtered = intervals.filter(iv => {
       const rA = recById[iv.idA];
       if (!rA) return false;
@@ -1181,7 +1181,6 @@ function renderNormalStats() {
   } else if (filterStart && filterEnd) {
     const s = new Date(filterStart).getTime();
     const e = new Date(filterEnd).getTime();
-    const recById = {}; records.forEach(r => { recById[r.id] = r; });
     filtered = intervals.filter(iv => {
       const rA = recById[iv.idA];
       if (!rA) return false;
@@ -1483,7 +1482,7 @@ function deleteInterval(idx) {
     const iv = intervals[idx];
     // If this was a single-record interval (endTs-based), clear the record's endTs
     if (iv.idB === null) {
-      const rec = records.find(r => r.id === iv.idA);
+      const rec = recById[iv.idA];
       if (rec) delete rec.endTs;
     }
     intervals.splice(idx, 1);
@@ -1745,8 +1744,8 @@ document.getElementById('records').addEventListener('click', e => {
         records[idx].content = newText;
         intervals.forEach(iv => {
           if (iv.idA === records[idx].id || iv.idB === records[idx].id) {
-            const rA = records.find(r => r.id === iv.idA);
-            const rB = records.find(r => r.id === iv.idB);
+            const rA = recById[iv.idA];
+            const rB = iv.idB ? recById[iv.idB] : null;
             if (rA && rB) {
               const earlyR = new Date(rA.ts) <= new Date(rB.ts) ? rA : rB;
               const lateR = new Date(rA.ts) <= new Date(rB.ts) ? rB : rA;
@@ -1785,6 +1784,16 @@ document.getElementById('records').addEventListener('click', e => {
       if (!isLinked) {
         // Auto-open the drill for the first linked interval's category
         drillCat = linkedIvs[0].category || '其他';
+        if (compareMode) {
+          // Detect which period the clicked record belongs to
+          const curRange = getPeriodRange(comparePeriod, 0);
+          const clickedRec = recById[rid];
+          if (clickedRec) {
+            const t = new Date(clickedRec.ts).getTime();
+            filterPeriod = (t >= curRange.start.getTime() && t <= curRange.end.getTime()) ? 'current' : 'previous';
+          }
+          document.body.classList.toggle('period-prev', filterPeriod === 'previous');
+        }
         renderStats();
 
         linkedIvs.forEach(iv => {
@@ -2024,6 +2033,8 @@ document.getElementById('catMgrList').addEventListener('change', e => {
 let catDragState = { active: false, idx: -1, moved: false };
 
 function initCatDrag() {
+  if (initCatDrag._done) return;
+  initCatDrag._done = true;
   const list = document.getElementById('catMgrList');
   if (!list) return;
 
@@ -2538,14 +2549,23 @@ document.getElementById('calMenuDrop').addEventListener('click', e => {
 document.getElementById('importFile').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
+  if (file.size > 2 * 1024 * 1024) { toast('文件过大'); e.target.value = ''; return; }
   const reader = new FileReader();
   reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
       if (!data.records || !Array.isArray(data.records)) throw new Error('格式无效');
       showConfirm('导入数据', `将覆盖当前数据（${data.records.length} 条记录，${data.intervals?.length || 0} 条耗时），确定导入？`, () => {
-        records = data.records;
-        intervals = data.intervals || [];
+        records = data.records.map(r => ({
+          id: r.id || uid(), content: String(r.content||'').slice(0,500),
+          ts: r.ts || now(), endTs: r.endTs || void 0
+        }));
+        intervals = (data.intervals || []).map(iv => ({
+          text: String(iv.text||'').slice(0,100), duration: Number(iv.duration)||0,
+          category: String(iv.category||'其他').slice(0,10),
+          remark: String(iv.remark||'').slice(0,30), ts: iv.ts || now(),
+          idA: iv.idA || '', idB: iv.idB || null
+        })).filter(iv => iv.idA);
         phrases = data.phrases || [];
         categories = (data.categories && data.categories.length) ? data.categories : [...DEFAULT_CATEGORIES];
         save();
@@ -2575,6 +2595,7 @@ document.getElementById('importFile').addEventListener('change', e => {
 // Init
 // ═══════════════════════════════════════
 load();
+recById = {}; records.forEach(r => { recById[r.id] = r; });
 // Fix corrupted categories data from previous bug
 if (!categories.length || categories.some(c => !c || typeof c !== 'string')) {
   categories = [...DEFAULT_CATEGORIES];
