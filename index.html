@@ -707,7 +707,8 @@ body {
     <span class="cal-menu-dots" id="calMenuDots" title="更多">⋯</span>
   </div>
   <div class="cal-menu-drop" id="calMenuDrop">
-    <div class="cal-menu-item" data-action="export">导出数据</div>
+    <div class="cal-menu-item" data-action="export">导出 Excel</div>
+    <div class="cal-menu-item" data-action="exportJson">导出备份</div>
     <div class="cal-menu-item" data-action="import">导入数据</div>
     <div class="cal-menu-item" data-action="reset">重置数据</div>
   </div>
@@ -967,6 +968,20 @@ function filterIntervalsByPeriod(ivs, period, offset) {
     }
     return false;
   });
+}
+
+function downloadFile(blob, fileName) {
+  const file = new File([blob], fileName, { type: blob.type });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file] }).catch(() => {});
+  } else {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName; a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  }
 }
 
 function toast(msg) {
@@ -2512,27 +2527,33 @@ document.getElementById('calMenuDrop').addEventListener('click', e => {
   document.getElementById('calMenuDrop').classList.remove('show');
 
   if (action === 'export') {
+    const BOM = '\uFEFF';
+    const rows = [];
+    rows.push('事件记录');
+    rows.push('时间,内容,结束时间,持续时长');
+    records.forEach(r => {
+      const ts = fmtTime(r.ts);
+      const content = '"' + (r.content || '').replace(/"/g, '""') + '"';
+      const endTs = r.endTs ? fmtTime(r.endTs) : '';
+      const dur = r.endTs ? fmtDurationMs(Math.abs(new Date(r.endTs) - new Date(r.ts))) : '';
+      rows.push(`${ts},${content},${endTs},${dur}`);
+    });
+    rows.push('');
+    rows.push('耗时统计');
+    rows.push('类目,描述,时长,备注');
+    intervals.forEach(iv => {
+      const cat = iv.category || '其他';
+      const text = '"' + (iv.text || '').replace(/"/g, '""') + '"';
+      const dur = fmtDurationMs(iv.duration);
+      const remark = '"' + (iv.remark || '').replace(/"/g, '""') + '"';
+      rows.push(`${cat},${text},${dur},${remark}`);
+    });
+    const csv = BOM + rows.join('\n');
+    downloadFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `memo-${new Date().toISOString().slice(0,10)}.csv`);
+  } else if (action === 'exportJson') {
     const data = { records, intervals, phrases, categories, exportTime: now() };
     const json = JSON.stringify(data, null, 2);
-    const fileName = `memo-backup-${new Date().toISOString().slice(0,10)}.json`;
-    const blob = new Blob([json], { type: 'application/json' });
-    const file = new File([blob], fileName, { type: 'application/json' });
-
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file] }).then(() => toast('数据已导出')).catch(() => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = fileName;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      });
-    } else {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = fileName;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
+    downloadFile(new Blob([json], { type: 'application/json' }), `memo-backup-${new Date().toISOString().slice(0,10)}.json`);
   } else if (action === 'import') {
     document.getElementById('importFile').click();
   } else if (action === 'reset') {
