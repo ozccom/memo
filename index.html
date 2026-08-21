@@ -104,10 +104,7 @@ body {
 .cal-cell.has-records { background: #f7f7f7; border: none; }
 .cal-cell.has-records:hover { background: #eeeeee; }
 .cal-cell.selected { background: #e8e8e8 !important; color: var(--text); }
-.cal-cell.selected:not(.has-records) {
-  background: transparent !important;
-  border: 1px solid var(--border);
-}
+.cal-cell.in-range { background: #f5f5f5; }
 
 .cal-actions { margin-top: 8px; text-align: center; }
 .cal-clear { font-size: 11px; color: var(--text-secondary); cursor: pointer; }
@@ -688,6 +685,96 @@ body {
 }
 .toast.show { opacity: 1; }
 
+/* ─── Export Range Modal ─── */
+.export-mask {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.export-mask.show { display: flex; }
+.export-modal {
+  background: #fff; border-radius: 14px; width: 320px;
+  max-width: 92vw; box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  overflow: hidden; animation: fadeIn .15s;
+}
+.export-modal-title {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  text-align: center; padding: 16px 16px 8px;
+}
+.export-modal-sub {
+  font-size: 11px; color: var(--text-secondary);
+  text-align: center; padding-bottom: 12px;
+}
+.export-modal-body { padding: 0 16px 12px; }
+.export-qf-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  margin-bottom: 12px;
+}
+.eqf-btn {
+  padding: 8px 0; border-radius: 8px; border: 1px solid var(--border);
+  font-size: 12px; cursor: pointer; background: #fff; color: var(--text);
+  font-family: var(--font-sans); transition: all .15s;
+}
+.eqf-btn:hover { border-color: #bbb; }
+.eqf-btn.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.export-time-box {
+  display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
+}
+.export-time-row {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; cursor: pointer; min-height: 40px;
+  transition: border-color .15s, background .15s; overflow: hidden;
+}
+.export-time-row:active { background: #fafafa; }
+.export-time-label {
+  font-size: 12px; color: var(--text-secondary); flex-shrink: 0;
+  pointer-events: none;
+}
+.export-time-value {
+  flex: 1; font-size: 13px; color: var(--text);
+  text-align: right; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+}
+.export-time-value.placeholder { color: var(--text-secondary); }
+.export-time-clear {
+  position: relative; z-index: 2; display: none;
+  width: 20px; height: 20px; border-radius: 50%;
+  border: none; background: transparent; color: var(--text-secondary);
+  font-size: 12px; cursor: pointer; flex-shrink: 0;
+}
+.export-time-row.has-value .export-time-clear { display: block; }
+.export-time-clear:hover { background: #f0f0f0; color: var(--text); }
+/* 透明输入框铺满整行，点击任意处即弹出原生时间选择控件 */
+.export-time-picker {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: none; background: transparent;
+  z-index: 1;
+}
+.export-modal-footer {
+  display: flex; gap: 8px; padding: 0 16px 16px;
+}
+.export-modal-footer button {
+  flex: 1; border: none; border-radius: 10px;
+  padding: 10px 0; font-size: 14px; font-weight: 500;
+  cursor: pointer; font-family: var(--font-sans); transition: opacity .15s;
+}
+.export-btn-cancel {
+  background: #f5f5f5; color: var(--text-secondary);
+}
+.export-btn-cancel:hover { opacity: 0.85; }
+.export-btn-ok {
+  background: var(--accent); color: #fff;
+}
+.export-btn-ok:hover { opacity: 0.85; }
+.export-range-hint {
+  font-size: 11px; color: var(--text-secondary);
+  text-align: center; padding-top: 8px; border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
 /* ─── Animations ─── */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
@@ -817,6 +904,44 @@ body {
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
+<!-- Export Range Modal -->
+<div class="export-mask" id="exportMask">
+  <div class="export-modal">
+    <div class="export-modal-title">导出 Excel</div>
+    <div class="export-modal-sub">选择要导出的时间范围</div>
+    <div class="export-modal-body">
+      <div class="export-qf-grid">
+        <button class="eqf-btn active" data-erange="all">全部</button>
+        <button class="eqf-btn" data-erange="current">当前</button>
+        <button class="eqf-btn" data-erange="today">本日</button>
+        <button class="eqf-btn" data-erange="week">本周</button>
+        <button class="eqf-btn" data-erange="month">本月</button>
+        <button class="eqf-btn" data-erange="quarter">本季</button>
+        <button class="eqf-btn" data-erange="year">本年</button>
+      </div>
+      <div class="export-time-box">
+        <div class="export-time-row" id="exportRowStart">
+          <span class="export-time-label">开始时间</span>
+          <span class="export-time-value placeholder" id="exportStartValue">选择</span>
+          <button class="export-time-clear" id="exportStartClear" title="清除">×</button>
+          <input type="datetime-local" class="export-time-picker" id="exportStartPicker" aria-label="选择开始时间">
+        </div>
+        <div class="export-time-row" id="exportRowEnd">
+          <span class="export-time-label">结束时间</span>
+          <span class="export-time-value placeholder" id="exportEndValue">选择</span>
+          <button class="export-time-clear" id="exportEndClear" title="清除">×</button>
+          <input type="datetime-local" class="export-time-picker" id="exportEndPicker" aria-label="选择结束时间">
+        </div>
+      </div>
+      <div class="export-range-hint" id="exportRangeHint">将导出全部数据</div>
+    </div>
+    <div class="export-modal-footer">
+      <button class="export-btn-cancel" id="exportCancel">取消</button>
+      <button class="export-btn-ok" id="exportConfirm">导出</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ═══════════════════════════════════════
 // Constants
@@ -846,6 +971,7 @@ let calDate = new Date(); // Current calendar month
 let filterDate = null;    // Date filter (YYYY-MM-DD), null = show all
 let filterStart = null;   // Range start
 let filterEnd = null;     // Range end
+let rangeSelStart = null; // 日历范围选择中的起始日 (YYYY-MM-DD)，等待第二次点击
 let filterCategory = null; // Category filter, null = show all
 let compareMode = false;   // 环比 comparison mode
 let comparePeriod = 'day'; // 'day'|'week'|'month'|'quarter'|'year'
@@ -1968,6 +2094,7 @@ document.getElementById('compareToggle').addEventListener('click', () => {
   bar.style.display = compareMode ? 'flex' : 'none';
   if (compareMode) {
     filterDate = null; filterStart = null; filterEnd = null;
+    rangeSelStart = null;
     filterCategory = null; filterPeriod = null;
     document.getElementById('tfStart').value = '';
     document.getElementById('tfEnd').value = '';
@@ -2316,6 +2443,8 @@ function renderCalendar() {
     filterLabel = filterDate;
   } else if (filterStart && filterEnd) {
     filterLabel = `${filterStart.slice(0,16).replace('T',' ')} 至 ${filterEnd.slice(0,16).replace('T',' ')}`;
+  } else if (rangeSelStart) {
+    filterLabel = `${rangeSelStart} 起 · 请选择结束日期`;
   } else {
     filterLabel = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   }
@@ -2323,6 +2452,21 @@ function renderCalendar() {
 
   const recDays = new Set();
   records.forEach(r => { recDays.add(localDate(r.ts)); });
+
+  // 计算当前选中的日期区间（用于日历高亮）
+  // rangeInfo: {start, end} 起止日期字符串；等待第二次点击时只有 start
+  let rangeInfo = null;
+  if (filterDate) {
+    rangeInfo = { start: filterDate, end: filterDate };
+  } else if (filterStart && filterEnd) {
+    const s = new Date(filterStart), e = new Date(filterEnd);
+    rangeInfo = {
+      start: `${s.getFullYear()}-${String(s.getMonth()+1).padStart(2,'0')}-${String(s.getDate()).padStart(2,'0')}`,
+      end:   `${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,'0')}-${String(e.getDate()).padStart(2,'0')}`
+    };
+  } else if (rangeSelStart) {
+    rangeInfo = { start: rangeSelStart, end: rangeSelStart };
+  }
 
   const firstDay = new Date(y, m, 1).getDay();
   const daysInMonth = new Date(y, m + 1, 0).getDate();
@@ -2337,7 +2481,16 @@ function renderCalendar() {
     let cls = 'cal-cell';
     if (ds === todayStr) cls += ' today';
     if (recDays.has(ds)) cls += ' has-records';
-    if (filterDate === ds) cls += ' selected';
+    if (rangeInfo) {
+      if (rangeInfo.end === rangeInfo.start && rangeInfo.start === ds) {
+        // 单日选中或等待第二次点击的起始日
+        cls += ' selected';
+      } else if (rangeInfo.start === ds || rangeInfo.end === ds) {
+        cls += ' selected';
+      } else if (ds > rangeInfo.start && ds < rangeInfo.end) {
+        cls += ' in-range';
+      }
+    }
     html += `<div class="${cls}" data-date="${ds}">${d}</div>`;
   }
   const total = firstDay + daysInMonth;
@@ -2352,6 +2505,7 @@ document.getElementById('calToday').addEventListener('click', () => {
   const today = new Date();
   filterDate = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   filterStart = null; filterEnd = null;
+  rangeSelStart = null;
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2413,6 +2567,7 @@ document.querySelector('.quick-filters').addEventListener('click', e => {
   filterStart = fmtL(start);
   filterEnd = fmtL(end);
   filterDate = null;
+  rangeSelStart = null;
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2453,12 +2608,55 @@ document.getElementById('calNext').addEventListener('click', () => {
 document.getElementById('calGrid').addEventListener('click', e => {
   const cell = e.target.closest('.cal-cell');
   if (!cell || cell.classList.contains('other')) return;
-  filterDate = cell.dataset.date;
-  filterStart = null; filterEnd = null;
+  const clicked = cell.dataset.date;
+
+  // 清除类目/环比等无关筛选
   filterCategory = null;
-  document.getElementById('tfStart').value = '';
-  document.getElementById('tfEnd').value = '';
+  if (compareMode) {
+    compareMode = false;
+    document.body.classList.remove("period-prev");
+    document.getElementById('compareToggle').classList.remove('active');
+    document.getElementById('compareBar').style.display = 'none';
+    filterPeriod = null;
+  }
   document.querySelectorAll('.qf-btn').forEach(b => b.classList.remove('active'));
+
+  if (!rangeSelStart) {
+    // 第一次点击：记录起始日，等待第二次点击
+    rangeSelStart = clicked;
+    filterDate = null;
+    filterStart = null; filterEnd = null;
+    document.getElementById('tfStart').value = '';
+    document.getElementById('tfEnd').value = '';
+  } else if (rangeSelStart === clicked) {
+    // 第二次点击同一天 → 选择当日
+    rangeSelStart = null;
+    filterDate = clicked;
+    filterStart = null; filterEnd = null;
+    document.getElementById('tfStart').value = '';
+    document.getElementById('tfEnd').value = '';
+  } else {
+    // 第二次点击不同日期 → 选择两天之间的范围
+    const d1 = new Date(rangeSelStart + 'T00:00:00');
+    const d2 = new Date(clicked + 'T00:00:00');
+    const [startD, endD] = d1 < d2 ? [d1, d2] : [d2, d1];
+    const fmtL = dd => {
+      const yy = dd.getFullYear();
+      const mm = String(dd.getMonth() + 1).padStart(2, '0');
+      const day = String(dd.getDate()).padStart(2, '0');
+      const hh = String(dd.getHours()).padStart(2, '0');
+      const mi = String(dd.getMinutes()).padStart(2, '0');
+      return `${yy}-${mm}-${day}T${hh}:${mi}`;
+    };
+    const startStr = fmtL(new Date(startD.getFullYear(), startD.getMonth(), startD.getDate(), 0, 0, 0));
+    const endStr = fmtL(new Date(endD.getFullYear(), endD.getMonth(), endD.getDate(), 23, 59, 59));
+    rangeSelStart = null;
+    filterDate = null;
+    filterStart = startStr;
+    filterEnd = endStr;
+    document.getElementById('tfStart').value = startStr;
+    document.getElementById('tfEnd').value = endStr;
+  }
   renderCalendar();
   renderRecords();
   renderStats();
@@ -2469,6 +2667,7 @@ document.getElementById('tfStart').addEventListener('change', () => {
   filterStart = document.getElementById('tfStart').value;
   filterEnd = document.getElementById('tfEnd').value;
   filterDate = null;
+  rangeSelStart = null;
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2489,6 +2688,7 @@ document.getElementById('tfEnd').addEventListener('change', () => {
   filterStart = document.getElementById('tfStart').value;
   filterEnd = document.getElementById('tfEnd').value;
   filterDate = null;
+  rangeSelStart = null;
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2527,29 +2727,7 @@ document.getElementById('calMenuDrop').addEventListener('click', e => {
   document.getElementById('calMenuDrop').classList.remove('show');
 
   if (action === 'export') {
-    const BOM = '\uFEFF';
-    const rows = [];
-    rows.push('事件记录');
-    rows.push('时间,内容,结束时间,持续时长');
-    records.forEach(r => {
-      const ts = fmtTime(r.ts);
-      const content = '"' + (r.content || '').replace(/"/g, '""') + '"';
-      const endTs = r.endTs ? fmtTime(r.endTs) : '';
-      const dur = r.endTs ? fmtDurationMs(Math.abs(new Date(r.endTs) - new Date(r.ts))) : '';
-      rows.push(`${ts},${content},${endTs},${dur}`);
-    });
-    rows.push('');
-    rows.push('耗时统计');
-    rows.push('类目,描述,时长,备注');
-    intervals.forEach(iv => {
-      const cat = iv.category || '其他';
-      const text = '"' + (iv.text || '').replace(/"/g, '""') + '"';
-      const dur = fmtDurationMs(iv.duration);
-      const remark = '"' + (iv.remark || '').replace(/"/g, '""') + '"';
-      rows.push(`${cat},${text},${dur},${remark}`);
-    });
-    const csv = BOM + rows.join('\n');
-    downloadFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `memo-${new Date().toISOString().slice(0,10)}.csv`);
+    openExportModal();
   } else if (action === 'exportJson') {
     const data = { records, intervals, phrases, categories, exportTime: now() };
     const json = JSON.stringify(data, null, 2);
@@ -2565,6 +2743,326 @@ document.getElementById('calMenuDrop').addEventListener('click', e => {
       location.reload();
     });
   }
+});
+
+// ═══════════════════════════════════════
+// ⋯ 导出范围选择弹窗
+// ═══════════════════════════════════════
+
+// 根据快捷选项计算 [start, end] 时间戳（ms），返回 null 表示全部
+function getExportRange(range) {
+  if (range === 'all') return null;
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const d = now.getDate();
+  let start, end;
+  if (range === 'today') {
+    start = new Date(y, m, d, 0, 0, 0);
+    end = new Date(y, m, d, 23, 59, 59, 999);
+  } else if (range === 'week') {
+    const dayOfWeek = now.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    start = new Date(y, m, d + mondayOffset, 0, 0, 0);
+    end = new Date(y, m, d + mondayOffset + 6, 23, 59, 59, 999);
+  } else if (range === 'month') {
+    start = new Date(y, m, 1, 0, 0, 0);
+    end = new Date(y, m + 1, 0, 23, 59, 59, 999);
+  } else if (range === 'quarter') {
+    const qStart = Math.floor(m / 3) * 3;
+    start = new Date(y, qStart, 1, 0, 0, 0);
+    end = new Date(y, qStart + 3, 0, 23, 59, 59, 999);
+  } else if (range === 'year') {
+    start = new Date(y, 0, 1, 0, 0, 0);
+    end = new Date(y, 11, 31, 23, 59, 59, 999);
+  }
+  return [start.getTime(), end.getTime()];
+}
+
+// 读取日历模块当前选择的时间范围（filterDate 单日 或 filterStart/filterEnd 范围）
+// 返回 [startMs, endMs]；未选择时返回 null
+function getCurrentRange() {
+  if (filterDate) {
+    // 日历选择了某一天
+    const start = new Date(filterDate + 'T00:00:00');
+    return [start.getTime(), start.getTime() + 24 * 3600 * 1000 - 1];
+  }
+  if (filterStart && filterEnd) {
+    return [new Date(filterStart).getTime(), new Date(filterEnd).getTime()];
+  }
+  return null;
+}
+
+// 当前选中的导出范围快捷选项
+let exportSelectedRange = 'all';
+// 自定义起止时间（'YYYY-MM-DDTHH:mm' 字符串或 null）
+let exportStartVal = null;
+let exportEndVal = null;
+
+// Date → 'YYYY-MM-DDTHH:mm'（本地时间）
+function fmtLocal(d) {
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+// '2026-08-21T10:00' → '2026-08-21 10:00'；空值显示"选择"
+function fmtExportTime(str) {
+  if (!str) return '选择';
+  return str.replace('T', ' ');
+}
+
+// 渲染一行时间（'start' | 'end'）
+function renderExportTime(which) {
+  const isStart = which === 'start';
+  const val = isStart ? exportStartVal : exportEndVal;
+  const valueEl = document.getElementById(isStart ? 'exportStartValue' : 'exportEndValue');
+  const rowEl = document.getElementById(isStart ? 'exportRowStart' : 'exportRowEnd');
+  const picker = document.getElementById(isStart ? 'exportStartPicker' : 'exportEndPicker');
+  valueEl.textContent = fmtExportTime(val);
+  valueEl.classList.toggle('placeholder', !val);
+  rowEl.classList.toggle('has-value', !!val);
+  picker.value = val || '';
+}
+
+function updateExportHint() {
+  const hint = document.getElementById('exportRangeHint');
+  const active = exportSelectedRange;
+
+  if (active === 'all') {
+    hint.textContent = `将导出全部数据（${records.length} 条记录，${intervals.length} 条耗时统计）`;
+    return;
+  }
+
+  // 自定义模式
+  if (active === 'custom') {
+    const s = exportStartVal, e = exportEndVal;
+    if (s && e) {
+      const cnt = records.filter(r => {
+        const t = new Date(r.ts).getTime();
+        return t >= new Date(s).getTime() && t <= new Date(e).getTime();
+      }).length;
+      hint.textContent = `范围内 ${cnt} 条记录`;
+    } else {
+      hint.textContent = '请选择起止时间';
+    }
+    return;
+  }
+
+  // 当前（日历模块已选范围）
+  if (active === 'current') {
+    const rng = getCurrentRange();
+    if (!rng) {
+      hint.textContent = '日历模块未选择时间范围';
+      return;
+    }
+    const cnt = records.filter(r => {
+      const t = new Date(r.ts).getTime();
+      return t >= rng[0] && t <= rng[1];
+    }).length;
+    hint.textContent = `当前范围：${fmtLocal(new Date(rng[0])).slice(0,10)} ~ ${fmtLocal(new Date(rng[1])).slice(0,10)}（${cnt} 条记录）`;
+    return;
+  }
+
+  // 快捷选项
+  const rng = getExportRange(active);
+  if (!rng) return;
+  const sDate = new Date(rng[0]);
+  const eDate = new Date(rng[1]);
+  const labels = { today:'本日', week:'本周', month:'本月', quarter:'本季', year:'本年' };
+  const cnt = records.filter(r => {
+    const t = new Date(r.ts).getTime();
+    return t >= rng[0] && t <= rng[1];
+  }).length;
+  hint.textContent = `${labels[active]}：${fmtLocal(sDate).slice(0,10)} ~ ${fmtLocal(eDate).slice(0,10)}（${cnt} 条记录）`;
+}
+
+function openExportModal() {
+  // 日历模块已选择范围时默认选中"当前"，否则默认"全部"
+  const hasCalendarRange = !!getCurrentRange();
+  exportSelectedRange = hasCalendarRange ? 'current' : 'all';
+  exportStartVal = null;
+  exportEndVal = null;
+  document.querySelectorAll('.eqf-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.eqf-btn[data-erange="${exportSelectedRange}"]`).classList.add('active');
+  if (exportSelectedRange === 'current') {
+    const rng = getCurrentRange();
+    if (rng) {
+      exportStartVal = fmtLocal(new Date(rng[0]));
+      exportEndVal = fmtLocal(new Date(rng[1]));
+    }
+  }
+  renderExportTime('start');
+  renderExportTime('end');
+  updateExportHint();
+  document.getElementById('exportMask').classList.add('show');
+}
+
+function closeExportModal() {
+  document.getElementById('exportMask').classList.remove('show');
+}
+
+// 快捷选项点击
+document.querySelector('.export-qf-grid').addEventListener('click', e => {
+  const btn = e.target.closest('.eqf-btn');
+  if (!btn) return;
+  document.querySelectorAll('.eqf-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  exportSelectedRange = btn.dataset.erange;
+  if (exportSelectedRange === 'all') {
+    exportStartVal = null;
+    exportEndVal = null;
+  } else if (exportSelectedRange === 'current') {
+    const rng = getCurrentRange();
+    if (rng) {
+      exportStartVal = fmtLocal(new Date(rng[0]));
+      exportEndVal = fmtLocal(new Date(rng[1]));
+    } else {
+      exportStartVal = null;
+      exportEndVal = null;
+    }
+  } else {
+    const rng = getExportRange(exportSelectedRange);
+    if (rng) {
+      exportStartVal = fmtLocal(new Date(rng[0]));
+      exportEndVal = fmtLocal(new Date(rng[1]));
+    }
+  }
+  renderExportTime('start');
+  renderExportTime('end');
+  updateExportHint();
+});
+
+// 开始/结束时间行：点击整行弹出原生时间选择器，选完显示为文字
+['start', 'end'].forEach(which => {
+  const isStart = which === 'start';
+  const picker = document.getElementById(isStart ? 'exportStartPicker' : 'exportEndPicker');
+  const clearBtn = document.getElementById(isStart ? 'exportStartClear' : 'exportEndClear');
+
+  // 点击 → 切换为自定义模式（取消快捷按钮高亮），透明输入框会弹出原生选择器
+  picker.addEventListener('click', () => {
+    if (exportSelectedRange !== 'custom') {
+      exportSelectedRange = 'custom';
+      document.querySelectorAll('.eqf-btn').forEach(b => b.classList.remove('active'));
+      updateExportHint();
+    }
+  });
+
+  // 选择完成 → 保存值并更新文字显示
+  picker.addEventListener('change', () => {
+    const v = picker.value;
+    if (isStart) exportStartVal = v || null;
+    else exportEndVal = v || null;
+    renderExportTime(which);
+    updateExportHint();
+  });
+
+  // 清除按钮
+  clearBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    picker.value = '';
+    if (isStart) exportStartVal = null;
+    else exportEndVal = null;
+    if (exportSelectedRange !== 'custom') {
+      exportSelectedRange = 'custom';
+      document.querySelectorAll('.eqf-btn').forEach(b => b.classList.remove('active'));
+    }
+    renderExportTime(which);
+    updateExportHint();
+  });
+});
+
+// 取消按钮
+document.getElementById('exportCancel').addEventListener('click', closeExportModal);
+
+// 点击遮罩关闭
+document.getElementById('exportMask').addEventListener('click', e => {
+  if (e.target.id === 'exportMask') closeExportModal();
+});
+
+// 确认导出
+document.getElementById('exportConfirm').addEventListener('click', () => {
+  let startMs = null, endMs = null;
+
+  if (exportSelectedRange === 'all') {
+    // 全部数据
+  } else if (exportSelectedRange === 'current') {
+    const rng = getCurrentRange();
+    if (!rng) { toast('请先在日历中选择时间范围'); return; }
+    startMs = rng[0];
+    endMs = rng[1];
+  } else if (exportSelectedRange === 'custom') {
+    const s = exportStartVal;
+    const e = exportEndVal;
+    if (!s || !e) { toast('请选择起止时间'); return; }
+    startMs = new Date(s).getTime();
+    endMs = new Date(e).getTime();
+    if (startMs > endMs) { toast('开始时间不能晚于结束时间'); return; }
+  } else {
+    const rng = getExportRange(exportSelectedRange);
+    if (rng) { startMs = rng[0]; endMs = rng[1]; }
+  }
+
+  // 筛选数据
+  const filteredRecords = (startMs === null)
+    ? records
+    : records.filter(r => {
+        const t = new Date(r.ts).getTime();
+        return t >= startMs && t <= endMs;
+      });
+  const filteredIntervals = (startMs === null)
+    ? intervals
+    : intervals.filter(iv => {
+        if (!iv.ts) return true;  // 无时间戳的耗时统计保留
+        const t = new Date(iv.ts).getTime();
+        return t >= startMs && t <= endMs;
+      });
+
+  if (filteredRecords.length === 0 && filteredIntervals.length === 0) {
+    toast('选定范围内没有数据');
+    return;
+  }
+
+  // 生成 CSV
+  const BOM = '\uFEFF';
+  const rows = [];
+  rows.push('事件记录');
+  rows.push('时间,内容,结束时间,持续时长');
+  filteredRecords.forEach(r => {
+    const ts = fmtTime(r.ts);
+    const content = '"' + (r.content || '').replace(/"/g, '""') + '"';
+    const endTs = r.endTs ? fmtTime(r.endTs) : '';
+    const dur = r.endTs ? fmtDurationMs(Math.abs(new Date(r.endTs) - new Date(r.ts))) : '';
+    rows.push(`${ts},${content},${endTs},${dur}`);
+  });
+  rows.push('');
+  rows.push('耗时统计');
+  rows.push('类目,描述,时长,备注');
+  filteredIntervals.forEach(iv => {
+    const cat = iv.category || '其他';
+    const text = '"' + (iv.text || '').replace(/"/g, '""') + '"';
+    const dur = fmtDurationMs(iv.duration);
+    const remark = '"' + (iv.remark || '').replace(/"/g, '""') + '"';
+    rows.push(`${cat},${text},${dur},${remark}`);
+  });
+  const csv = BOM + rows.join('\n');
+
+  // 文件名带范围后缀
+  let suffix = '-all';
+  if (startMs !== null) {
+    const s = new Date(startMs);
+    const e = new Date(endMs);
+    const f = dd => `${dd.getFullYear()}${String(dd.getMonth()+1).padStart(2,'0')}${String(dd.getDate()).padStart(2,'0')}`;
+    suffix = `-${f(s)}-${f(e)}`;
+  }
+  const fileName = `memo${suffix}.csv`;
+  downloadFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), fileName);
+
+  closeExportModal();
+  toast(`已导出 ${filteredRecords.length} 条记录，${filteredIntervals.length} 条耗时统计`);
 });
 
 document.getElementById('importFile').addEventListener('change', e => {
