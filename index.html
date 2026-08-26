@@ -3123,6 +3123,12 @@ if (!categories.length || categories.some(c => !c || typeof c !== 'string')) {
 rebuildUsed();
 renderPhrases();
 initPhraseDrag();
+// 默认显示当天的事件记录
+{
+  const t = new Date();
+  filterDate = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  filterStart = null; filterEnd = null; rangeSelStart = null;
+}
 renderRecords();
 renderCalendar();
 renderInterval();
