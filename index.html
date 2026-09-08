@@ -507,7 +507,7 @@ body {
 /* Drill-down */
 .stats-drill {
   display: none; margin-top: 10px; padding-top: 10px;
-  border-top: 1px solid var(--border); animation: fadeIn .2s; max-height: 250px; overflow-y: auto;
+  border-top: 1px solid var(--border); animation: fadeIn .2s;
 }
 .stats-drill.show { display: block; }
 
@@ -535,7 +535,7 @@ body {
 .drill-item { -webkit-tap-highlight-color: transparent; }
 .drill-dur { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; width: 80px; white-space: nowrap; }
 .drill-body { flex: 1; min-width: 0; }
-.drill-content { font-size: 12px; color: var(--text-secondary); line-height: 1.4; word-break: break-word; }
+.drill-content { font-size: 12px; color: var(--text-secondary); line-height: 1.4; word-break: break-word; white-space: normal; overflow-wrap: anywhere; }
 .drill-remark { font-size: 11px; color: #aaa; margin-top: 2px; }
 .drill-remark {
   font-size: 11px; color: #aaa; margin-top: 3px;
@@ -1096,6 +1096,41 @@ function filterIntervalsByPeriod(ivs, period, offset) {
   });
 }
 
+// 当前日历模块的过滤范围（filterDate 单日 / filterStart~filterEnd 区间）
+// 返回 [startMs, endMs]；未选择返回 null
+function getCurrentFilterRangeMs() {
+  if (filterDate) {
+    return [
+      new Date(filterDate + 'T00:00:00').getTime(),
+      new Date(filterDate + 'T23:59:59').getTime()
+    ];
+  }
+  if (filterStart && filterEnd) {
+    return [
+      new Date(filterStart).getTime(),
+      new Date(filterEnd).getTime()
+    ];
+  }
+  return null;
+}
+
+// 判断一个 interval 是否落在 [sMs, eMs] 时间范围内
+function intervalInMsRange(iv, sMs, eMs) {
+  const rA = iv.idA ? recById[iv.idA] : null;
+  if (rA) {
+    const tA = new Date(rA.ts).getTime();
+    if (tA >= sMs && tA <= eMs) return true;
+  }
+  if (iv.idB) {
+    const rB = recById[iv.idB];
+    if (rB) {
+      const tB = new Date(rB.ts).getTime();
+      if (tB >= sMs && tB <= eMs) return true;
+    }
+  }
+  return false;
+}
+
 function downloadFile(blob, fileName) {
   const file = new File([blob], fileName, { type: blob.type });
   if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -1480,7 +1515,7 @@ function renderCompareDrill(curIvs, sorted, prevIvs) {
       <div class="drill-item" data-ida="${iv.idA || ''}" data-idb="${iv.idB || ''}" data-color="${getBarColor(iv.category)}">
         <span class="drill-dur">${fmtDurationMs(iv.duration)}</span>
         <div class="drill-body">
-          <div class="drill-content">${escapeHtml(iv.text)}</div>
+          <div class="drill-content">${escapeHtml(getIntervalText(iv))}</div>
           ${iv.remark ? `<div class="drill-remark">${escapeHtml(iv.remark)}</div>` : ''}
         </div>
         <button class="drill-del" onclick="event.stopPropagation();deleteInterval(${iv.idx})" title="删除">✕</button>
@@ -1505,7 +1540,7 @@ function renderDrill(filteredIvs) {
       <div class="drill-item" data-ida="${iv.idA || ''}" data-idb="${iv.idB || ''}" data-color="${getBarColor(iv.category)}">
         <span class="drill-dur">${fmtDurationMs(iv.duration)}</span>
         <div class="drill-body">
-          <div class="drill-content">${escapeHtml(iv.text)}</div>
+          <div class="drill-content">${escapeHtml(getIntervalText(iv))}</div>
           ${iv.remark ? `<div class="drill-remark">${escapeHtml(iv.remark)}</div>` : ''}
         </div>
         <button class="drill-del" onclick="event.stopPropagation();deleteInterval(${iv.idx})" title="删除">✕</button>
@@ -1616,6 +1651,36 @@ function rebuildUsed() {
 // Check if a record ID is used in any dual-record interval (idB !== null)
 function isInDualInterval(recId) {
   return intervals.some(iv => (iv.idA === recId || iv.idB === recId) && iv.idB !== null);
+}
+
+// 按关联记录实时计算一条耗时记录的文案（与存储的 iv.text 快照无关）
+//  - 双事件 interval：早记录完整内容 → 晚记录完整内容（按 ts 排序，不截断）
+//  - 单事件 interval：record 完整内容（不截断）；若 endTs < ts 追加 " (反向)"
+//  - 记录缺失时回退到保存时的快照 iv.text
+function getIntervalText(iv) {
+  const rA = iv.idA ? recById[iv.idA] : null;
+  if (iv.idB) {
+    const rB = recById[iv.idB];
+    if (rA && rB) {
+      const earlyR = new Date(rA.ts) <= new Date(rB.ts) ? rA : rB;
+      const lateR = new Date(rA.ts) <= new Date(rB.ts) ? rB : rA;
+      return earlyR.content + ' → ' + lateR.content;
+    }
+    return iv.text;
+  }
+  if (rA) {
+    const isReverse = rA.endTs && new Date(rA.endTs).getTime() < new Date(rA.ts).getTime();
+    return rA.content + (isReverse ? ' (反向)' : '');
+  }
+  return iv.text;
+}
+
+// 编辑某条 record 后，把引用它的所有 interval 的 text 快照刷新到最新
+function syncIntervalTextForRecord(recId) {
+  intervals.forEach(iv => {
+    if (iv.idA !== recId && iv.idB !== recId) return;
+    iv.text = getIntervalText(iv);
+  });
 }
 
 function deleteInterval(idx) {
@@ -1883,17 +1948,8 @@ document.getElementById('records').addEventListener('click', e => {
       const newText = input.value.trim();
       if (newText && newText !== text) {
         records[idx].content = newText;
-        intervals.forEach(iv => {
-          if (iv.idA === records[idx].id || iv.idB === records[idx].id) {
-            const rA = recById[iv.idA];
-            const rB = iv.idB ? recById[iv.idB] : null;
-            if (rA && rB) {
-              const earlyR = new Date(rA.ts) <= new Date(rB.ts) ? rA : rB;
-              const lateR = new Date(rA.ts) <= new Date(rB.ts) ? rB : rA;
-              iv.text = earlyR.content.slice(0, 16) + ' → ' + lateR.content.slice(0, 16);
-            }
-          }
-        });
+        // 同步刷新所有引用了该记录的耗时记录文案（单/双事件都覆盖）
+        syncIntervalTextForRecord(records[idx].id);
         save(); renderRecords(); renderStats();
       } else {
         const span = document.createElement('div');
@@ -1995,9 +2051,6 @@ document.getElementById('records').addEventListener('click', e => {
             const rB = recMap[iv.idB];
             if (rA && rB) {
               iv.duration = Math.abs(new Date(rB.ts) - new Date(rA.ts));
-              const earlyR = new Date(rA.ts) <= new Date(rB.ts) ? rA : rB;
-              const lateR = new Date(rA.ts) <= new Date(rB.ts) ? rB : rA;
-              iv.text = earlyR.content.slice(0, 16) + ' → ' + lateR.content.slice(0, 16);
             }
           }
           // Single-record interval (endTs-based)
@@ -2005,11 +2058,12 @@ document.getElementById('records').addEventListener('click', e => {
             const rA = recMap[iv.idA];
             if (rA && rA.endTs) {
               iv.duration = Math.abs(new Date(rA.endTs) - new Date(rA.ts));
-              iv.text = rA.content.slice(0, 16);
             }
           }
         }
       });
+      // 统一刷新涉及该记录的耗时记录文案（含单/双事件 + 反向标志）
+      syncIntervalTextForRecord(recId);
       selected.clear();
       save();
       drillCat = null;
@@ -2124,17 +2178,51 @@ document.getElementById('compareBar').addEventListener('click', e => {
 
 document.getElementById('clearAllBtn').addEventListener('click', () => {
   if (intervals.length === 0) { toast('暂无耗时记录'); return; }
-  showConfirm('清除耗时记录', `确定清除全部 ${intervals.length} 条耗时记录？`, () => {
-    intervals = [];
-    usedIds.clear();
-    // Also clear all endTs from records
-    records.forEach(r => { delete r.endTs; });
+  const range = getCurrentFilterRangeMs();
+  if (!range) {
+    toast('请先在日历中选择要清除的日期范围');
+    return;
+  }
+  const [sMs, eMs] = range;
+  // 与 renderNormalStats 一致：双事件只要 idA 或 idB 落在范围内即命中
+  const targets = intervals
+    .map((iv, i) => ({ iv, i }))
+    .filter(({ iv }) => intervalInMsRange(iv, sMs, eMs));
+  if (targets.length === 0) { toast('当前范围内没有耗时记录'); return; }
+  const label = filterDate
+    ? filterDate
+    : `${filterStart.replace('T', ' ')} 至 ${filterEnd.replace('T', ' ')}`;
+  showConfirm('清除耗时记录', `确定清除 ${label} 范围内的 ${targets.length} 条耗时记录？`, () => {
+    // 记录被影响但仍可能被保留 interval 引用的 id 集合
+    const stillReferenced = new Set();
+    intervals.forEach(iv => { if (iv.idA) stillReferenced.add(iv.idA); if (iv.idB) stillReferenced.add(iv.idB); });
+    // 待删除的 id 集合（用于决定是否清理 endTs）
+    const removed = new Set();
+    // 从后往前删，避免 index 错位
+    const idxs = targets.map(t => t.i).sort((a, b) => b - a);
+    idxs.forEach(i => {
+      const iv = intervals[i];
+      removed.add(iv.idA);
+      if (iv.idB) removed.add(iv.idB);
+      stillReferenced.delete(iv.idA);
+      if (iv.idB) stillReferenced.delete(iv.idB);
+      intervals.splice(i, 1);
+    });
+    // 仅对单事件 interval（idB===null）所属的记录清理 endTs；
+    // 并且该记录当前不能还被其他 interval 引用
+    targets.forEach(({ iv }) => {
+      if (iv.idB == null) {
+        const rec = recById[iv.idA];
+        if (rec && !stillReferenced.has(iv.idA)) delete rec.endTs;
+      }
+    });
+    rebuildUsed();
     save();
+    drillCat = null;
     renderStats();
     renderRecords();
-    document.getElementById('statsSection').classList.remove('show');
-    document.getElementById('statsSection').classList.remove('show');
-    drillCat = null;
+    if (intervals.length === 0) document.getElementById('statsSection').classList.remove('show');
+    toast(`已清除 ${targets.length} 条耗时记录`);
   });
 });
 
@@ -3043,7 +3131,7 @@ document.getElementById('exportConfirm').addEventListener('click', () => {
   rows.push('类目,描述,时长,备注');
   filteredIntervals.forEach(iv => {
     const cat = iv.category || '其他';
-    const text = '"' + (iv.text || '').replace(/"/g, '""') + '"';
+    const text = '"' + (getIntervalText(iv) || '').replace(/"/g, '""') + '"';
     const dur = fmtDurationMs(iv.duration);
     const remark = '"' + (iv.remark || '').replace(/"/g, '""') + '"';
     rows.push(`${cat},${text},${dur},${remark}`);
