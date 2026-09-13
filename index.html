@@ -143,6 +143,65 @@ body {
 .qf-btn:hover { border-color: #ccc; color: var(--accent); background: var(--accent-light); }
 .qf-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* ─── Shift Filter (自定义时段快捷筛选) ─── */
+.shift-filters {
+  display: flex; gap: 6px; margin-top: 8px;
+}
+.shift-item { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* 按钮尺寸与「本日」等快捷按钮完全一致 */
+.shift-btn {
+  width: 100%; padding: 4px 0;
+  border-radius: 6px; border: 1px solid var(--border);
+  font-size: 11px; cursor: pointer; color: var(--text-secondary);
+  background-color: #fff;               /* 用长属性，避免被 UA 的 buttonface 覆盖 */
+  font-family: var(--font-sans); transition: background-color .15s, color .15s, border-color .15s;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: center; user-select: none;
+  -webkit-appearance: none; appearance: none;
+}
+/* 悬停：只在"未选中且可用"时变浅，选中态不受影响 */
+.shift-btn:hover:not(:disabled):not(.active) {
+  border-color: #ccc; color: var(--accent); background-color: var(--accent-light);
+}
+/* 选中态：置于 :hover/:disabled 之后并提高权重，
+   保证激活时始终是深色，不因悬停或禁用而变灰 */
+.shift-btn.active,
+.shift-btn.active:hover,
+.shift-btn.active:disabled {
+  background-color: var(--accent); color: #fff; border-color: var(--accent);
+  opacity: 1;
+}
+.shift-btn:disabled {
+  cursor: not-allowed;
+  color: #bbb; background-color: #fafafa; border-color: var(--border);
+}
+/* 仅在"未选中"时才淡化，保证选中态始终为黑 */
+.shift-btn:disabled:not(.active) { opacity: 0.4; }
+.shift-btn.editing {
+  white-space: normal; text-overflow: clip; overflow: visible;
+}
+
+/* 时间范围显示控件（样式对齐事件记录的时间控件：纯文字，无输入框、无下划线）*/
+.shift-times {
+  display: flex; align-items: center; justify-content: center;
+  gap: 3px; margin-top: 3px;
+}
+.shift-time {
+  position: relative; cursor: pointer;
+  font-size: 10px; color: var(--text-secondary);
+  white-space: nowrap; padding: 2px 0;
+}
+.shift-time:hover { color: var(--accent); }
+.shift-time.has-val { color: var(--text); }
+/* 透明 datetime-local 覆盖在文字上，点击即唤起原生控件 */
+.shift-time-picker {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: none; background: transparent;
+  z-index: 1; font-size: 10px;
+}
+.shift-sep { font-size: 10px; color: #ccc; flex-shrink: 0; }
+
 .cal-range { display: flex; align-items: center; gap: 6px; margin-top: 8px; justify-content: center; }
 .cal-date {
   border: 1px solid var(--border); border-radius: 6px;
@@ -828,6 +887,32 @@ body {
         <button class="qf-btn" data-range="quarter">季度</button>
         <button class="qf-btn" data-range="year">年度</button>
       </div>
+      <div class="shift-filters" id="shiftFilters">
+        <div class="shift-item" data-shift="0">
+          <button class="shift-btn" data-shift-btn="0" disabled>班次1</button>
+          <div class="shift-times">
+            <span class="shift-time" data-shift-time="0-start" id="stStart0">选择
+              <input type="time" class="shift-time-picker" id="stStartPick0" aria-label="班次1开始时间">
+            </span>
+            <span class="shift-sep">-</span>
+            <span class="shift-time" data-shift-time="0-end" id="stEnd0">选择
+              <input type="time" class="shift-time-picker" id="stEndPick0" aria-label="班次1结束时间">
+            </span>
+          </div>
+        </div>
+        <div class="shift-item" data-shift="1">
+          <button class="shift-btn" data-shift-btn="1" disabled>班次2</button>
+          <div class="shift-times">
+            <span class="shift-time" data-shift-time="1-start" id="stStart1">选择
+              <input type="time" class="shift-time-picker" id="stStartPick1" aria-label="班次2开始时间">
+            </span>
+            <span class="shift-sep">-</span>
+            <span class="shift-time" data-shift-time="1-end" id="stEnd1">选择
+              <input type="time" class="shift-time-picker" id="stEndPick1" aria-label="班次2结束时间">
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -977,6 +1062,16 @@ let compareMode = false;   // 环比 comparison mode
 let comparePeriod = 'day'; // 'day'|'week'|'month'|'quarter'|'year'
 let filterPeriod = null;   // null|'current'|'previous' — which period bar was clicked
 
+// 自定义班次筛选：每个按钮保存名称 + 固定的时间范围
+// { name: '班次1', start: '08:00'|null, end: '20:00'|null }
+let shiftFilters = [
+  { name: '班次1', start: null, end: null },
+  { name: '班次2', start: null, end: null }
+];
+let shiftActive = null;    // 当前生效的班次索引（0/1），null = 未启用
+// 记住最近一次选中的班次：切换日期后自动沿用，直到用户改选其他班次
+let shiftSelected = null;
+
 // ═══════════════════════════════════════
 // Storage
 // ═══════════════════════════════════════
@@ -985,6 +1080,8 @@ function save() {
   localStorage.setItem('nb_intervals', JSON.stringify(intervals));
   localStorage.setItem('nb_phrases', JSON.stringify(phrases));
   localStorage.setItem('nb_categories', JSON.stringify(categories));
+  localStorage.setItem('nb_shift_filters', JSON.stringify(shiftFilters));
+  localStorage.setItem('nb_shift_selected', shiftSelected == null ? '' : String(shiftSelected));
   recById = {}; records.forEach(r => { recById[r.id] = r; });
 }
 
@@ -999,6 +1096,20 @@ function load() {
     categories = (savedCats && Array.isArray(savedCats) && savedCats.length && savedCats[0])
       ? savedCats.filter(Boolean) : [...DEFAULT_CATEGORIES];
     if (!categories.length) categories = [...DEFAULT_CATEGORIES];
+    const savedShifts = JSON.parse(localStorage.getItem('nb_shift_filters') || 'null');
+    if (Array.isArray(savedShifts) && savedShifts.length) {
+      shiftFilters = [0, 1].map(i => {
+        const s = savedShifts[i] || {};
+        return {
+          name: String(s.name || `班次${i + 1}`).slice(0, 12) || `班次${i + 1}`,
+          start: /^\d{2}:\d{2}$/.test(s.start) ? s.start : null,
+          end: /^\d{2}:\d{2}$/.test(s.end) ? s.end : null
+        };
+      });
+    }
+    // 恢复上次选中的班次，使刷新后仍自动沿用
+    const savedSel = localStorage.getItem('nb_shift_selected');
+    shiftSelected = (savedSel === '0' || savedSel === '1') ? Number(savedSel) : null;
   } catch { records = []; intervals = []; phrases = []; categories = [...DEFAULT_CATEGORIES]; }
 }
 
@@ -1093,6 +1204,128 @@ function filterIntervalsByPeriod(ivs, period, offset) {
       if (rB && isInRange(rB.ts, start, end)) return true;
     }
     return false;
+  });
+}
+
+// ═══════════════════════════════════════
+// 自定义班次筛选（单日 + 固定时段）
+// ═══════════════════════════════════════
+
+// 当前是否启用班次筛选（必须已选中"单日"）
+function isShiftActive() {
+  return filterDate != null && shiftActive != null && filterDate.length === 10;
+}
+
+// 日期切换后同步班次：沿用用户最近选择的班次（无需重复点击）；
+// 若用户已取消班次（shiftSelected === null）则保持不启用
+function syncShiftOnDateChange() {
+  shiftActive = shiftSelected;
+}
+
+// 把 'HH:mm' 转成当天的毫秒数；start 用秒数 00，end 用秒数 59
+function hmToMs(hm, isEnd) {
+  const [h, m] = hm.split(':').map(Number);
+  return (h * 3600 + m * 60 + (isEnd ? 59 : 0)) * 1000;
+}
+
+// 解析当前生效班次的时间范围（支持跨天，如 20:00 → 次日 08:00）
+// 返回 { start: Date, end: Date, nextDayStart: Date } 或 null
+//   nextDayStart = 次日 00:00，超过该点即为"次日凌晨"时段，用于筛选归日
+function getShiftRange() {
+  if (!isShiftActive()) return null;
+  const sf = shiftFilters[shiftActive];
+  if (!sf || !sf.start || !sf.end) return null;
+  const [y, mo, d] = filterDate.split('-').map(Number);
+  const dayStart = new Date(y, mo - 1, d, 0, 0, 0, 0);
+  let s = dayStart.getTime() + hmToMs(sf.start, false);
+  let e = dayStart.getTime() + hmToMs(sf.end, true);
+  let crossDay = false;
+  if (e <= s) { e += 24 * 3600 * 1000; crossDay = true; }   // 跨天（夜班）
+  return {
+    start: new Date(s),
+    end: new Date(e),
+    nextDayStart: new Date(dayStart.getTime() + 24 * 3600 * 1000),
+    crossDay
+  };
+}
+
+// 返回当前班次筛选的 [startMs, endMs]；未启用返回 null
+function getShiftRangeMs() {
+  const r = getShiftRange();
+  return r ? [r.start.getTime(), r.end.getTime()] : null;
+}
+
+// 判断一条记录是否落在当前班次范围内
+//  - 普通班次：仅匹配所选单日内的时段
+//  - 跨日班次（夜班）：所选单日 [start, 24:00) + 次日 [00:00, end] 均命中，
+//    这样点选某日筛夜班时，次日凌晨的记录也能一并筛出
+function recordInShift(r) {
+  const range = getShiftRange();
+  if (!range) return true;
+  const t = new Date(r.ts).getTime();
+  const s = range.start.getTime();
+  const e = range.end.getTime();
+  if (t >= s && t <= e) return true;
+  if (range.crossDay) {
+    // 次日凌晨段：归一化到所选日 → 与 end 的时分秒比较
+    const n = new Date(t);
+    const dayDiff = Math.floor(
+      (new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()
+       - range.nextDayStart.getTime()) / 86400000
+    );
+    if (dayDiff === 0) {
+      const msOfDay = n.getTime() - new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+      const endMsOfDay = e - range.nextDayStart.getTime();
+      if (msOfDay <= endMsOfDay) return true;
+    }
+  }
+  return false;
+}
+
+// 判断一条耗时记录是否落在当前班次范围内（idA 或 idB 任一命中即可）
+function intervalInShift(iv) {
+  if (!getShiftRange()) return true;
+  const rA = iv.idA ? recById[iv.idA] : null;
+  if (rA && recordInShift(rA)) return true;
+  if (iv.idB) {
+    const rB = recById[iv.idB];
+    if (rB && recordInShift(rB)) return true;
+  }
+  return false;
+}
+
+// 班次筛选状态描述（用于日历条 / 空态文案）
+function shiftLabel() {
+  const sf = shiftFilters[shiftActive];
+  if (!isShiftActive() || !sf || !sf.start || !sf.end) return '';
+  return `${sf.name} ${sf.start}-${sf.end}`;
+}
+
+// 渲染两个自定义按钮及其时间控件
+function renderShiftFilters() {
+  shiftFilters.forEach((sf, i) => {
+    const btn = document.querySelector(`.shift-btn[data-shift-btn="${i}"]`);
+    const startEl = document.getElementById(`stStart${i}`);
+    const endEl = document.getElementById(`stEnd${i}`);
+    const startPick = document.getElementById(`stStartPick${i}`);
+    const endPick = document.getElementById(`stEndPick${i}`);
+    if (!btn) return;
+
+    btn.textContent = sf.name;
+    btn.disabled = !filterDate;                              // 仅单日可选
+    // 已选中的班次保持高亮：单日时按生效状态，多日范围时按"选择记忆"显示
+    const on = filterDate ? (isShiftActive() && shiftActive === i) : (shiftSelected === i);
+    btn.classList.toggle('active', on);
+    btn.title = !filterDate
+      ? `已在多日范围禁用；回到单日将自动筛选「${sf.name}」`
+      : (!sf.start || !sf.end ? '点击两次可改名；请先设定时间范围' : `${sf.name}：${sf.start} - ${sf.end}`);
+
+    startEl.classList.toggle('has-val', !!sf.start);
+    endEl.classList.toggle('has-val', !!sf.end);
+    startEl.childNodes[0].nodeValue = sf.start || '选择';
+    endEl.childNodes[0].nodeValue = sf.end || '选择';
+    startPick.value = sf.start || '';
+    endPick.value = sf.end || '';
   });
 }
 
@@ -1211,7 +1444,11 @@ function renderRecords() {
 
   let filtered;
   if (filterDate) {
-    filtered = records.map((r, i) => ({ r, i })).filter(({ r }) => localDate(r.ts) === filterDate);
+    // 班次筛选启用时（尤其跨日夜班），改用 recordInShift 判定，
+    // 这样所选单日 + 次日凌晨的记录都能命中；否则保持原有"当天"语义
+    filtered = isShiftActive()
+      ? records.map((r, i) => ({ r, i })).filter(({ r }) => recordInShift(r))
+      : records.map((r, i) => ({ r, i })).filter(({ r }) => localDate(r.ts) === filterDate);
   } else if (filterStart && filterEnd) {
     const startT = new Date(filterStart).getTime();
     const endT = new Date(filterEnd).getTime();
@@ -1263,6 +1500,7 @@ function renderRecords() {
     if (filterCategory && compareMode) msg = `「${filterCategory}」类目${filterPeriod === 'previous' ? '上期' : '本期'}暂无记录`;
     else if (compareMode) msg = '本期和上期暂无记录';
     else if (filterCategory) msg = `「${filterCategory}」类目暂无记录`;
+    else if (filterDate && isShiftActive()) msg = `当天「${shiftLabel()}」时段没有记录`;
     else if (filterDate) msg = '当天没有记录';
     else if (filterStart) msg = '该时间段内没有记录';
     emptyEl.querySelector('div:last-child').textContent = msg;
@@ -1343,7 +1581,10 @@ function renderStats() {
 
 function renderNormalStats() {
   let filtered = intervals;
-  if (filterDate) {
+  if (filterDate && isShiftActive()) {
+    // 班次筛选（尤其跨日夜班）：用 intervalInShift 判定，覆盖所选日 + 次日凌晨
+    filtered = intervals.filter(iv => intervalInShift(iv));
+  } else if (filterDate) {
     const dStart = new Date(filterDate + 'T00:00:00').getTime();
     const dEnd = new Date(filterDate + 'T23:59:59').getTime();
     filtered = intervals.filter(iv => {
@@ -1369,7 +1610,9 @@ function renderNormalStats() {
 
   if (filtered.length === 0) {
     const hasFilter = filterDate || filterStart;
-    document.getElementById('statsSummary').textContent = hasFilter ? '该时间范围内暂无耗时记录' : '暂无已保存的耗时记录';
+    document.getElementById('statsSummary').textContent = (filterDate && isShiftActive())
+      ? `当天「${shiftLabel()}」时段暂无耗时记录`
+      : (hasFilter ? '该时间范围内暂无耗时记录' : '暂无已保存的耗时记录');
     document.getElementById('statsBars').innerHTML = '';
     document.getElementById('statsDrill').classList.remove('show');
     drillCat = null;
@@ -1389,7 +1632,8 @@ function renderNormalStats() {
   });
 
   document.getElementById('statsSummary').textContent =
-    `共 ${filtered.length} 条耗时记录，合计 ${fmtDurationMs(totalDuration)}`;
+    `共 ${filtered.length} 条耗时记录，合计 ${fmtDurationMs(totalDuration)}`
+    + (isShiftActive() ? `（${shiftLabel()}）` : '');
 
   const bars = document.getElementById('statsBars');
   const maxDur = Math.max(...categories.map(c => catMap[c].duration), 1);
@@ -2149,6 +2393,7 @@ document.getElementById('compareToggle').addEventListener('click', () => {
   if (compareMode) {
     filterDate = null; filterStart = null; filterEnd = null;
     rangeSelStart = null;
+    shiftActive = null;
     filterCategory = null; filterPeriod = null;
     document.getElementById('tfStart').value = '';
     document.getElementById('tfEnd').value = '';
@@ -2528,7 +2773,7 @@ function renderCalendar() {
   // Show current filter in cal bar
   let filterLabel;
   if (filterDate) {
-    filterLabel = filterDate;
+    filterLabel = isShiftActive() ? `${filterDate} · ${shiftLabel()}` : filterDate;
   } else if (filterStart && filterEnd) {
     filterLabel = `${filterStart.slice(0,16).replace('T',' ')} 至 ${filterEnd.slice(0,16).replace('T',' ')}`;
   } else if (rangeSelStart) {
@@ -2587,6 +2832,8 @@ function renderCalendar() {
     html += `<div class="cal-cell other">${d}</div>`;
   }
   document.getElementById('calGrid').innerHTML = html;
+  // 同步自定义班次筛选按钮状态（按钮仅在单日选中时可用）
+  renderShiftFilters();
 }
 
 document.getElementById('calToday').addEventListener('click', () => {
@@ -2594,6 +2841,7 @@ document.getElementById('calToday').addEventListener('click', () => {
   filterDate = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   filterStart = null; filterEnd = null;
   rangeSelStart = null;
+  syncShiftOnDateChange();   // 回到今天时同样沿用所选班次
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2656,6 +2904,7 @@ document.querySelector('.quick-filters').addEventListener('click', e => {
   filterEnd = fmtL(end);
   filterDate = null;
   rangeSelStart = null;
+  shiftActive = null;   // 多日范围不支持班次筛选（shiftSelected 保留，回到单日自动恢复）
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2709,6 +2958,9 @@ document.getElementById('calGrid').addEventListener('click', e => {
   }
   document.querySelectorAll('.qf-btn').forEach(b => b.classList.remove('active'));
 
+  // 日期变化 → 自动沿用最近选择的班次（若用户已取消则保持不启用）
+  syncShiftOnDateChange();
+
   if (!rangeSelStart) {
     // 第一次点击：记录起始日，等待第二次点击
     rangeSelStart = clicked;
@@ -2756,6 +3008,7 @@ document.getElementById('tfStart').addEventListener('change', () => {
   filterEnd = document.getElementById('tfEnd').value;
   filterDate = null;
   rangeSelStart = null;
+  shiftActive = null;   // 切换为区间筛选，班次暂不生效（选择保留）
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2777,6 +3030,7 @@ document.getElementById('tfEnd').addEventListener('change', () => {
   filterEnd = document.getElementById('tfEnd').value;
   filterDate = null;
   rangeSelStart = null;
+  shiftActive = null;   // 切换为区间筛选，班次暂不生效（选择保留）
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2791,6 +3045,103 @@ document.getElementById('tfEnd').addEventListener('change', () => {
     renderRecords();
     renderStats();
   }
+});
+
+// ═══════════════════════════════════════
+// 自定义班次筛选：按钮点击 / 双击改名 / 时间范围设定
+// ═══════════════════════════════════════
+
+// 单击按钮：按当前设定时段筛选当日数据（仅单日可选）
+function applyShiftFilter(i) {
+  if (!filterDate) { toast('请先在日历中选择单日'); return; }
+  const sf = shiftFilters[i];
+  if (!sf.start || !sf.end) { toast(`请先设定「${sf.name}」的时间范围`); return; }
+  // 再次点击同一按钮 → 取消班次筛选
+  const off = (shiftActive === i);
+  shiftActive = off ? null : i;
+  shiftSelected = off ? null : i;   // 记住选择，切日期后自动沿用
+  save();                           // 持久化选择，刷新后仍生效
+  renderCalendar();
+  renderRecords();
+  renderStats();
+}
+
+// 双击按钮：行内改名（点两次才可自定义名称）
+function startShiftRename(i, btn) {
+  if (btn.classList.contains('editing')) return;
+  const sf = shiftFilters[i];
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = sf.name;
+  input.maxLength = 12;
+  input.className = 'shift-btn-name-input';
+  input.style.cssText = 'width:100%;border:none;outline:none;background:transparent;' +
+    'font-size:11px;font-family:var(--font-sans);color:inherit;text-align:center;padding:0;';
+  btn.classList.add('editing');
+  btn.textContent = '';
+  btn.appendChild(input);
+  btn._skipClick = true;
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = (save) => {
+    if (done) return; done = true;
+    const v = input.value.trim();
+    if (save && v) { sf.name = v.slice(0, 12); save_shift(); }
+    renderShiftFilters();
+  };
+  input.addEventListener('blur', () => commit(true));
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); commit(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+  });
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('dblclick', e => e.stopPropagation());
+}
+
+function save_shift() {
+  localStorage.setItem('nb_shift_filters', JSON.stringify(shiftFilters));
+}
+
+document.getElementById('shiftFilters').addEventListener('click', e => {
+  const btn = e.target.closest('.shift-btn');
+  if (!btn) return;
+  if (btn._skipClick) { btn._skipClick = false; return; }
+  if (btn.classList.contains('editing')) return;
+  const i = Number(btn.dataset.shiftBtn);
+  if (btn.disabled) { toast('请先在日历中选择单日'); return; }
+
+  // 双击判定：300ms 内两次点击 → 改名
+  if (btn._clickTimer) {
+    clearTimeout(btn._clickTimer);
+    btn._clickTimer = null;
+    startShiftRename(i, btn);
+  } else {
+    btn._clickTimer = setTimeout(() => {
+      btn._clickTimer = null;
+      applyShiftFilter(i);
+    }, 300);
+  }
+});
+
+// 时间范围设定：设定后保持不变，直到下次更改
+[0, 1].forEach(i => {
+  const sp = document.getElementById(`stStartPick${i}`);
+  const ep = document.getElementById(`stEndPick${i}`);
+  const onSet = (which, val) => {
+    const sf = shiftFilters[i];
+    if (which === 'start') sf.start = val || null; else sf.end = val || null;
+    save_shift();
+    renderShiftFilters();
+    const has = sf.start && sf.end;
+    toast(has ? `「${sf.name}」已设定 ${sf.start} - ${sf.end}` : `「${sf.name}」时段不完整，请补全`);
+    // 若范围变化且当前正启用该班次，立即重新筛选
+    if (has && shiftActive === i) { renderRecords(); renderStats(); renderCalendar(); }
+  };
+  sp.addEventListener('change', () => onSet('start', sp.value));
+  ep.addEventListener('change', () => onSet('end', ep.value));
 });
 
 // ═══════════════════════════════════════
@@ -3208,6 +3559,8 @@ if (!categories.length || categories.some(c => !c || typeof c !== 'string')) {
   categories = [...DEFAULT_CATEGORIES];
   save();
 }
+// 恢复上次选中的班次：让生效状态与选择记忆在首屏就保持一致（避免高亮态闪烁）
+shiftActive = shiftSelected;
 rebuildUsed();
 renderPhrases();
 initPhraseDrag();
@@ -3216,7 +3569,9 @@ initPhraseDrag();
   const t = new Date();
   filterDate = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
   filterStart = null; filterEnd = null; rangeSelStart = null;
+  syncShiftOnDateChange();   // 沿用上次选中的班次
 }
+renderShiftFilters();
 renderRecords();
 renderCalendar();
 renderInterval();
