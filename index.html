@@ -137,11 +137,13 @@ body {
 }
 .qf-btn {
   flex: 1; padding: 4px 0; border-radius: 6px; border: 1px solid var(--border);
-  font-size: 11px; cursor: pointer; background: #fff; color: var(--text-secondary);
-  font-family: var(--font-sans); transition: all .15s;
+  font-size: 11px; cursor: pointer; color: var(--text-secondary);
+  background-color: #fff; font-family: var(--font-sans);
+  transition: background-color .15s, color .15s, border-color .15s;
+  -webkit-appearance: none; appearance: none;
 }
-.qf-btn:hover { border-color: #ccc; color: var(--accent); background: var(--accent-light); }
-.qf-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+/* 无悬停变色，仅点击后进入激活态 */
+.qf-btn.active { background-color: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ─── Shift Filter (自定义时段快捷筛选) ─── */
 .shift-filters {
@@ -160,24 +162,26 @@ body {
   text-align: center; user-select: none;
   -webkit-appearance: none; appearance: none;
 }
-/* 悬停：只在"未选中且可用"时变浅，选中态不受影响 */
+/* 悬停不变色：仅在未选中且可用时略微加深边框，不做整块浅灰填充 */
 .shift-btn:hover:not(:disabled):not(.active) {
-  border-color: #ccc; color: var(--accent); background-color: var(--accent-light);
+  border-color: #ddd;
 }
-/* 选中态：置于 :hover/:disabled 之后并提高权重，
-   保证激活时始终是深色，不因悬停或禁用而变灰 */
+/* 选中态：仅在可用（单日）时为深色。
+   非单日时段按钮会被 :disabled 置灰，故此处不加 :disabled 分支，
+   避免"禁用但保持黑色"与灰化规则互相冲突。 */
 .shift-btn.active,
-.shift-btn.active:hover,
-.shift-btn.active:disabled {
+.shift-btn.active:hover {
   background-color: var(--accent); color: #fff; border-color: var(--accent);
   opacity: 1;
 }
-.shift-btn:disabled {
+/* 禁用态（非单日筛选）：统一置灰，优先级高于 .active */
+.shift-btn:disabled,
+.shift-btn:disabled.active,
+.shift-btn:disabled:hover {
   cursor: not-allowed;
   color: #bbb; background-color: #fafafa; border-color: var(--border);
+  opacity: 0.4;
 }
-/* 仅在"未选中"时才淡化，保证选中态始终为黑 */
-.shift-btn:disabled:not(.active) { opacity: 0.4; }
 .shift-btn.editing {
   white-space: normal; text-overflow: clip; overflow: visible;
 }
@@ -1312,13 +1316,16 @@ function renderShiftFilters() {
     if (!btn) return;
 
     btn.textContent = sf.name;
-    btn.disabled = !filterDate;                              // 仅单日可选
-    // 已选中的班次保持高亮：单日时按生效状态，多日范围时按"选择记忆"显示
-    const on = filterDate ? (isShiftActive() && shiftActive === i) : (shiftSelected === i);
-    btn.classList.toggle('active', on);
+    // 渲染时兜底清理改名残留状态，避免编辑态/跳过点击标记卡住导致按钮失效
+    btn.classList.remove('editing');
+    btn._skipClick = false;
+    // 仅在单日筛选下可用；本周/本月/季度/年度及任意区间一律禁用并置灰
+    btn.disabled = !filterDate;
+    // 只有可用（单日）时才显示选中态
+    btn.classList.toggle('active', !btn.disabled && isShiftActive() && shiftActive === i);
     btn.title = !filterDate
       ? `已在多日范围禁用；回到单日将自动筛选「${sf.name}」`
-      : (!sf.start || !sf.end ? '点击两次可改名；请先设定时间范围' : `${sf.name}：${sf.start} - ${sf.end}`);
+      : (!sf.start || !sf.end ? '双击（触屏长按）可改名；请先设定时间范围' : `${sf.name}：${sf.start} - ${sf.end}`);
 
     startEl.classList.toggle('has-val', !!sf.start);
     endEl.classList.toggle('has-val', !!sf.end);
@@ -2864,7 +2871,13 @@ document.getElementById('calToday').addEventListener('click', () => {
 document.querySelector('.quick-filters').addEventListener('click', e => {
   const btn = e.target.closest('.qf-btn');
   if (!btn) return;
-  const range = btn.dataset.range;
+  let range = btn.dataset.range;
+
+  // 点击已激活的"本周/本月/季度/年度" → 取消该筛选，回落到「本日」
+  if (range !== 'today' && btn.classList.contains('active')) {
+    range = 'today';
+  }
+
   const now = new Date();
   const y = now.getFullYear();
   const m = now.getMonth();
@@ -2900,11 +2913,24 @@ document.querySelector('.quick-filters').addEventListener('click', e => {
     return `${yy}-${mm}-${dd}T${hh}:${mi}`;
   };
 
-  filterStart = fmtL(start);
-  filterEnd = fmtL(end);
-  filterDate = null;
-  rangeSelStart = null;
-  shiftActive = null;   // 多日范围不支持班次筛选（shiftSelected 保留，回到单日自动恢复）
+  // 「本日」是单日筛选，走 filterDate 以支持班次联动；其余为区间筛选
+  if (range === 'today') {
+    const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    filterDate = ds;
+    filterStart = null; filterEnd = null;
+    rangeSelStart = null;
+    document.getElementById('tfStart').value = '';
+    document.getElementById('tfEnd').value = '';
+    syncShiftOnDateChange();   // 沿用已选班次
+  } else {
+    filterStart = fmtL(start);
+    filterEnd = fmtL(end);
+    filterDate = null;
+    rangeSelStart = null;
+    shiftActive = null;   // 多日范围不支持班次筛选（shiftSelected 保留，回到单日自动恢复）
+    document.getElementById('tfStart').value = filterStart;
+    document.getElementById('tfEnd').value = filterEnd;
+  }
   filterCategory = null;
   if (compareMode) {
     compareMode = false;
@@ -2913,13 +2939,18 @@ document.querySelector('.quick-filters').addEventListener('click', e => {
     document.getElementById('compareBar').style.display = 'none';
     filterPeriod = null;
   }
-  document.getElementById('tfStart').value = filterStart;
-  document.getElementById('tfEnd').value = filterEnd;
-  document.getElementById('empty').querySelector('div:last-child').textContent = '该时间段内没有记录';
+  document.getElementById('empty').querySelector('div:last-child').textContent =
+    range === 'today' ? '当天没有记录' : '该时间段内没有记录';
 
   // Highlight active button
   document.querySelectorAll('.qf-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  // 「本日」为回落目标，若它并非被点击的那个，也要同步高亮
+  if (range === 'today') {
+    document.querySelectorAll('.qf-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.range === 'today');
+    });
+  }
 
   renderCalendar();
   renderRecords();
@@ -3089,7 +3120,11 @@ function startShiftRename(i, btn) {
     if (done) return; done = true;
     const v = input.value.trim();
     if (save && v) { sf.name = v.slice(0, 12); save_shift(); }
+    // 显式退出编辑态；_skipClick 延迟释放，用于吞掉本次点击产生的 click
+    btn.classList.remove('editing');
     renderShiftFilters();
+    input.remove();
+    setTimeout(() => { btn._skipClick = false; }, 0);
   };
   input.addEventListener('blur', () => commit(true));
   input.addEventListener('keydown', e => {
@@ -3108,22 +3143,39 @@ function save_shift() {
 document.getElementById('shiftFilters').addEventListener('click', e => {
   const btn = e.target.closest('.shift-btn');
   if (!btn) return;
-  if (btn._skipClick) { btn._skipClick = false; return; }
-  if (btn.classList.contains('editing')) return;
+  if (btn.classList.contains('editing')) return;   // 正在改名，不触发筛选
   const i = Number(btn.dataset.shiftBtn);
   if (btn.disabled) { toast('请先在日历中选择单日'); return; }
+  // 长按改名后紧跟的这一次 click 需要吞掉（仅一次）
+  if (btn._skipClick) { btn._skipClick = false; return; }
+  // 立即生效，不做任何延迟等待（避免"点一下停顿再变色"）
+  applyShiftFilter(i);
+});
 
-  // 双击判定：300ms 内两次点击 → 改名
-  if (btn._clickTimer) {
-    clearTimeout(btn._clickTimer);
-    btn._clickTimer = null;
-    startShiftRename(i, btn);
-  } else {
-    btn._clickTimer = setTimeout(() => {
-      btn._clickTimer = null;
-      applyShiftFilter(i);
-    }, 300);
-  }
+// 改名入口：双击（桌面）/ 长按（触屏）
+// 区分逻辑不放在 click 里，因此单击筛选可以即时响应
+document.getElementById('shiftFilters').addEventListener('dblclick', e => {
+  const btn = e.target.closest('.shift-btn');
+  if (!btn || btn.disabled || btn.classList.contains('editing')) return;
+  startShiftRename(Number(btn.dataset.shiftBtn), btn);
+});
+
+[0, 1].forEach(i => {
+  const btn = document.querySelector(`.shift-btn[data-shift-btn="${i}"]`);
+  if (!btn) return;
+  let timer = null;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  btn.addEventListener('touchstart', () => {
+    if (btn.disabled) return;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      btn._skipClick = true;   // 抑制长按后触发的 click
+      startShiftRename(i, btn);
+    }, 700);
+  }, { passive: true });
+  ['touchend', 'touchcancel', 'touchmove'].forEach(ev =>
+    btn.addEventListener(ev, cancel, { passive: true }));
 });
 
 // 时间范围设定：设定后保持不变，直到下次更改
@@ -3571,6 +3623,10 @@ initPhraseDrag();
   filterStart = null; filterEnd = null; rangeSelStart = null;
   syncShiftOnDateChange();   // 沿用上次选中的班次
 }
+// 首屏高亮「本日」（与默认的单日筛选保持一致）
+document.querySelectorAll('.qf-btn').forEach(b => {
+  b.classList.toggle('active', b.dataset.range === 'today');
+});
 renderShiftFilters();
 renderRecords();
 renderCalendar();
